@@ -357,7 +357,7 @@ func classifyStripeResponse(statusCode int, body []byte) (status, code, message 
 	case "succeeded":
 		return "charged", "SUCCESS", "payment succeeded"
 	case "requires_action":
-		return "3ds_required", "3DS_REQUIRED", "3D Secure authentication required"
+		return "approved", "3DS_REQUIRED", "Card is live (3D Secure required by merchant)"
 	case "requires_capture":
 		return "charged", "REQUIRES_CAPTURE", "payment authorized"
 	case "requires_payment_method":
@@ -477,7 +477,7 @@ func processCard(cfg CardConfig) CheckResult {
 	fmt.Println()
 
 	// Small delay to mimic real user filling in a form
-	time.Sleep(2 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 
 	// -------------------------------------------------------
 	// Step 1: Request 1 — Gravity Forms Stripe validation
@@ -595,7 +595,7 @@ func processCard(cfg CardConfig) CheckResult {
 	fmt.Println()
 
 	// Small delay to mimic user entering card details
-	time.Sleep(3 * time.Second)
+	time.Sleep(500 * time.Millisecond)
 
 	// -------------------------------------------------------
 	// Step 3: Request 2 — Stripe payment intent confirmation
