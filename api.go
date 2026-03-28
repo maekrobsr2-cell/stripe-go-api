@@ -18,19 +18,14 @@ type StripeCheckRequest struct {
 	Card string `json:"card"` // "num|mm|yyyy|cvv" format
 
 	// Optional overrides (defaults used if empty)
-	FirstName   string `json:"first_name,omitempty"`
-	LastName    string `json:"last_name,omitempty"`
-	Email       string `json:"email,omitempty"`
-	Address1    string `json:"address1,omitempty"`
-	Address2    string `json:"address2,omitempty"`
-	City        string `json:"city,omitempty"`
-	State       string `json:"state,omitempty"`
-	ZipCode     string `json:"zip_code,omitempty"`
-	Country     string `json:"country,omitempty"`
-	CountryCode string `json:"country_code,omitempty"`
-	InvoiceNum  string `json:"invoice_num,omitempty"`
-	Currency    string `json:"currency,omitempty"`
-	Amount      string `json:"amount,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Email   string `json:"email,omitempty"`
+	Country string `json:"country_code,omitempty"`
+	Address string `json:"address1,omitempty"`
+	City    string `json:"city,omitempty"`
+	Zip     string `json:"zip_code,omitempty"`
+	State   string `json:"state,omitempty"`
+	Phone   string `json:"phone,omitempty"`
 }
 
 // BatchStripeCheckRequest is the JSON body for POST /api/check/batch
@@ -39,19 +34,14 @@ type BatchStripeCheckRequest struct {
 	MaxWorkers int      `json:"max_workers,omitempty"` // default 2
 
 	// Optional shared overrides
-	FirstName   string `json:"first_name,omitempty"`
-	LastName    string `json:"last_name,omitempty"`
-	Email       string `json:"email,omitempty"`
-	Address1    string `json:"address1,omitempty"`
-	Address2    string `json:"address2,omitempty"`
-	City        string `json:"city,omitempty"`
-	State       string `json:"state,omitempty"`
-	ZipCode     string `json:"zip_code,omitempty"`
-	Country     string `json:"country,omitempty"`
-	CountryCode string `json:"country_code,omitempty"`
-	InvoiceNum  string `json:"invoice_num,omitempty"`
-	Currency    string `json:"currency,omitempty"`
-	Amount      string `json:"amount,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Email   string `json:"email,omitempty"`
+	Country string `json:"country_code,omitempty"`
+	Address string `json:"address1,omitempty"`
+	City    string `json:"city,omitempty"`
+	Zip     string `json:"zip_code,omitempty"`
+	State   string `json:"state,omitempty"`
+	Phone   string `json:"phone,omitempty"`
 }
 
 // BatchCheckResponse wraps results for multiple cards
@@ -96,44 +86,29 @@ func handleCheckSingle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Apply optional overrides from request
-	if req.FirstName != "" {
-		cardCfg.FirstName = req.FirstName
-	}
-	if req.LastName != "" {
-		cardCfg.LastName = req.LastName
+	if req.Name != "" {
+		cardCfg.Name = req.Name
 	}
 	if req.Email != "" {
 		cardCfg.Email = req.Email
 	}
-	if req.Address1 != "" {
-		cardCfg.Address1 = req.Address1
+	if req.Country != "" {
+		cardCfg.Country = req.Country
 	}
-	if req.Address2 != "" {
-		cardCfg.Address2 = req.Address2
+	if req.Address != "" {
+		cardCfg.Address1 = req.Address
 	}
 	if req.City != "" {
 		cardCfg.City = req.City
 	}
+	if req.Zip != "" {
+		cardCfg.Zip = req.Zip
+	}
 	if req.State != "" {
 		cardCfg.State = req.State
 	}
-	if req.ZipCode != "" {
-		cardCfg.ZipCode = req.ZipCode
-	}
-	if req.Country != "" {
-		cardCfg.Country = req.Country
-	}
-	if req.CountryCode != "" {
-		cardCfg.CountryCode = req.CountryCode
-	}
-	if req.InvoiceNum != "" {
-		cardCfg.InvoiceNum = req.InvoiceNum
-	}
-	if req.Currency != "" {
-		cardCfg.Currency = req.Currency
-	}
-	if req.Amount != "" {
-		cardCfg.Amount = req.Amount
+	if req.Phone != "" {
+		cardCfg.Phone = req.Phone
 	}
 
 	// Fill remaining defaults
@@ -212,44 +187,29 @@ func handleCheckBatch(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Apply shared overrides
-			if req.FirstName != "" {
-				cardCfg.FirstName = req.FirstName
-			}
-			if req.LastName != "" {
-				cardCfg.LastName = req.LastName
+			if req.Name != "" {
+				cardCfg.Name = req.Name
 			}
 			if req.Email != "" {
 				cardCfg.Email = req.Email
 			}
-			if req.Address1 != "" {
-				cardCfg.Address1 = req.Address1
+			if req.Country != "" {
+				cardCfg.Country = req.Country
 			}
-			if req.Address2 != "" {
-				cardCfg.Address2 = req.Address2
+			if req.Address != "" {
+				cardCfg.Address1 = req.Address
 			}
 			if req.City != "" {
 				cardCfg.City = req.City
 			}
+			if req.Zip != "" {
+				cardCfg.Zip = req.Zip
+			}
 			if req.State != "" {
 				cardCfg.State = req.State
 			}
-			if req.ZipCode != "" {
-				cardCfg.ZipCode = req.ZipCode
-			}
-			if req.Country != "" {
-				cardCfg.Country = req.Country
-			}
-			if req.CountryCode != "" {
-				cardCfg.CountryCode = req.CountryCode
-			}
-			if req.InvoiceNum != "" {
-				cardCfg.InvoiceNum = req.InvoiceNum
-			}
-			if req.Currency != "" {
-				cardCfg.Currency = req.Currency
-			}
-			if req.Amount != "" {
-				cardCfg.Amount = req.Amount
+			if req.Phone != "" {
+				cardCfg.Phone = req.Phone
 			}
 
 			cardCfg = fillDefaults(cardCfg)
