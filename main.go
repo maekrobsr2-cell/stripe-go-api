@@ -524,91 +524,190 @@ return resp.StatusCode, body, nil
 }
 
 // ─── Response Classification ─────────────────────────────────────────────────
+// Mirrors the real Stripe Payment Link (/v1/payment_pages) response formats.
+// error.type is inspected first: only "card_error" produces a card verdict;
+// "invalid_request_error", "api_error", "rate_limit_error" are site-level.
 
 func classifyStripeResponse(statusCode int, body []byte) (status, code, message string) {
-var resp map[string]interface{}
-if err := json.Unmarshal(body, &resp); err != nil {
-return "error", "PARSE_ERROR", "failed to parse Stripe response"
+	var resp map[string]interface{}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return "error", "PARSE_ERROR", "failed to parse Stripe response"
+	}
+
+	// ── Top-level error object (most common path for card declines) ──
+	if errObj, ok := resp["error"].(map[string]interface{}); ok {
+		errType, _ := errObj["type"].(string)
+		errCode, _ := errObj["code"].(string)
+		declineCode, _ := errObj["decline_code"].(string)
+		msg, _ := errObj["message"].(string)
+
+		effective := errCode
+		if declineCode != "" {
+			effective = declineCode
+		}
+
+		// Non-card errors → site/API-level, should retry on another site
+		switch errType {
+		case "invalid_request_error":
+			return "error", "INVALID_REQUEST:" + effective, msg
+		case "api_error":
+			return "error", "API_ERROR:" + effective, msg
+		case "rate_limit_error":
+			return "error", "RATE_LIMIT", msg
+		case "idempotency_error":
+			return "error", "IDEMPOTENCY_ERROR", msg
+		}
+
+		// card_error (or unknown type) → classify the decline/code
+		return classifyCode(effective, msg)
+	}
+
+	// ── Nested payment_intent (confirm response often wraps one) ──
+	if pi, ok := resp["payment_intent"].(map[string]interface{}); ok {
+		piStatus, _ := pi["status"].(string)
+		switch piStatus {
+		case "succeeded":
+			return "charged", "SUCCESS", "Payment succeeded"
+		case "requires_action":
+			return "approved", "3DS_REQUIRED", "Card is live (3D Secure required)"
+		case "requires_capture":
+			return "charged", "REQUIRES_CAPTURE", "Payment authorized"
+		case "requires_payment_method":
+			// Card was declined during confirmation
+			if lastErr, ok := pi["last_payment_error"].(map[string]interface{}); ok {
+				errCode, _ := lastErr["code"].(string)
+				declineCode, _ := lastErr["decline_code"].(string)
+				msg, _ := lastErr["message"].(string)
+				if declineCode != "" {
+					errCode = declineCode
+				}
+				return classifyCode(errCode, msg)
+			}
+			return "declined", "REQUIRES_PAYMENT_METHOD", "Card was declined"
+		}
+	}
+
+	// ── Top-level status (payment_pages returns this) ──
+	topStatus, _ := resp["status"].(string)
+	switch topStatus {
+	case "succeeded", "complete":
+		return "charged", "SUCCESS", "Payment succeeded"
+	case "requires_action":
+		return "approved", "3DS_REQUIRED", "Card is live (3D Secure required)"
+	case "requires_capture":
+		return "charged", "REQUIRES_CAPTURE", "Payment authorized"
+	case "processing":
+		return "approved", "PROCESSING", "Payment is processing (card accepted)"
+	case "requires_payment_method":
+		return "declined", "REQUIRES_PAYMENT_METHOD", "Card was declined"
+	}
+
+	// HTTP 402 = payment required = generic decline
+	if statusCode == 402 {
+		return "declined", "PAYMENT_FAILED", "Payment failed"
+	}
+
+	return "unknown", "UNKNOWN", fmt.Sprintf("unexpected response (HTTP %d)", statusCode)
 }
 
-if errObj, ok := resp["error"].(map[string]interface{}); ok {
-code, _ := errObj["code"].(string)
-declineCode, _ := errObj["decline_code"].(string)
-msg, _ := errObj["message"].(string)
-if declineCode != "" {
-code = declineCode
-}
-return classifyCode(code, msg)
-}
-
-if pi, ok := resp["payment_intent"].(map[string]interface{}); ok {
-piStatus, _ := pi["status"].(string)
-switch piStatus {
-case "succeeded":
-return "charged", "SUCCESS", "payment succeeded"
-case "requires_action":
-return "approved", "3DS_REQUIRED", "Card is live (3D Secure required)"
-case "requires_capture":
-return "charged", "REQUIRES_CAPTURE", "payment authorized"
-}
-if lastErr, ok := pi["last_payment_error"].(map[string]interface{}); ok {
-code, _ := lastErr["code"].(string)
-declineCode, _ := lastErr["decline_code"].(string)
-msg, _ := lastErr["message"].(string)
-if declineCode != "" {
-code = declineCode
-}
-return classifyCode(code, msg)
-}
-}
-
-piStatus, _ := resp["status"].(string)
-switch piStatus {
-case "succeeded", "complete":
-return "charged", "SUCCESS", "payment succeeded"
-case "requires_action":
-return "approved", "3DS_REQUIRED", "Card is live (3D Secure required)"
-case "requires_capture":
-return "charged", "REQUIRES_CAPTURE", "payment authorized"
-case "processing":
-return "unknown", "PROCESSING", "payment is processing"
-}
-
-if statusCode == 402 {
-return "declined", "PAYMENT_FAILED", "payment failed"
-}
-
-return "unknown", "UNKNOWN", fmt.Sprintf("unexpected response (HTTP %d)", statusCode)
-}
-
+// classifyCode uses exact-match on every known Stripe decline_code / error code.
+// Reference: https://docs.stripe.com/declines/codes
 func classifyCode(code, msg string) (string, string, string) {
-u := strings.ToUpper(code)
-switch {
-case strings.Contains(u, "INCORRECT_CVC") || strings.Contains(u, "INVALID_CVC"):
-return "approved", code, msg
-case strings.Contains(u, "INSUFFICIENT"):
-return "approved", code, msg
-case strings.Contains(u, "AUTHENTICATION_REQUIRED"):
-return "approved", code, msg
-case strings.Contains(u, "STOLEN") || strings.Contains(u, "LOST") || strings.Contains(u, "PICKUP"):
-return "declined", code, msg
-case strings.Contains(u, "EXPIRED"):
-return "declined", code, msg
-case strings.Contains(u, "DECLINED") || strings.Contains(u, "DO_NOT"):
-return "declined", code, msg
-case strings.Contains(u, "FRAUDULENT"):
-return "declined", code, msg
-case strings.Contains(u, "INCORRECT_NUMBER") || strings.Contains(u, "INVALID_NUMBER"):
-return "declined", code, msg
-case strings.Contains(u, "PROCESSING_ERROR"):
-return "declined", code, msg
-case strings.Contains(u, "CARD_NOT_SUPPORTED"):
-return "declined", code, msg
-case strings.Contains(u, "CURRENCY_NOT_SUPPORTED"):
-return "declined", code, msg
-default:
-return "declined", code, msg
-}
+	lc := strings.ToLower(code)
+	switch lc {
+
+	// ── APPROVED  (card is live / has funds) ──────────────────────────
+	case "incorrect_cvc", "invalid_cvc":
+		return "approved", code, msg
+	case "insufficient_funds":
+		return "approved", code, msg
+	case "authentication_required":
+		return "approved", code, msg
+	case "approve_with_id":
+		return "approved", code, msg
+	case "card_velocity_exceeded":
+		return "approved", code, msg
+	case "withdrawal_count_limit_exceeded":
+		return "approved", code, msg
+	case "issuer_not_available":
+		return "approved", code, msg
+	case "try_again_later":
+		return "approved", code, msg
+	case "reenter_transaction":
+		return "approved", code, msg
+	case "incorrect_zip", "incorrect_address":
+		return "approved", code, msg
+
+	// ── DECLINED  (card is dead) ─────────────────────────────────────
+	case "card_declined", "generic_decline":
+		return "declined", code, msg
+	case "do_not_honor":
+		return "declined", code, msg
+	case "do_not_try_again":
+		return "declined", code, msg
+	case "fraudulent":
+		return "declined", code, msg
+	case "stolen_card":
+		return "declined", code, msg
+	case "lost_card":
+		return "declined", code, msg
+	case "pickup_card":
+		return "declined", code, msg
+	case "expired_card":
+		return "declined", code, msg
+	case "incorrect_number", "invalid_number":
+		return "declined", code, msg
+	case "invalid_expiry_month", "invalid_expiry_year":
+		return "declined", code, msg
+	case "processing_error":
+		return "declined", code, msg
+	case "card_not_supported":
+		return "declined", code, msg
+	case "currency_not_supported":
+		return "declined", code, msg
+	case "restricted_card":
+		return "declined", code, msg
+	case "security_violation":
+		return "declined", code, msg
+	case "service_not_allowed":
+		return "declined", code, msg
+	case "transaction_not_allowed":
+		return "declined", code, msg
+	case "new_account_information_available":
+		return "declined", code, msg
+	case "testmode_decline":
+		return "declined", code, msg
+	case "live_mode_test_card":
+		return "declined", code, msg
+	case "merchant_blacklist":
+		return "declined", code, msg
+	case "not_permitted":
+		return "declined", code, msg
+	case "revocation_of_all_authorizations":
+		return "declined", code, msg
+	case "revocation_of_authorization":
+		return "declined", code, msg
+	case "invalid_account":
+		return "declined", code, msg
+	case "invalid_amount":
+		return "declined", code, msg
+	case "call_issuer":
+		return "declined", code, msg
+	case "no_action_taken":
+		return "declined", code, msg
+
+	default:
+		// Fallback: pattern-match for partial matches
+		u := strings.ToUpper(code)
+		switch {
+		case strings.Contains(u, "INSUFFICIENT") || strings.Contains(u, "CVC") || strings.Contains(u, "AUTHENTICATION"):
+			return "approved", code, msg
+		case strings.Contains(u, "DECLINE") || strings.Contains(u, "STOLEN") || strings.Contains(u, "LOST") ||
+			strings.Contains(u, "FRAUD") || strings.Contains(u, "EXPIRED") || strings.Contains(u, "PICKUP"):
+			return "declined", code, msg
+		}
+		return "declined", code, msg
+	}
 }
 
 // ─── Core: processCard ───────────────────────────────────────────────────────
@@ -656,11 +755,15 @@ Elapsed: time.Since(start).Seconds(),
 }
 
 func isSiteError(code string) bool {
-switch code {
-case "SESSION_INIT_ERROR", "AMOUNT_UPDATE_ERROR", "SITE_HTTP_ERROR", "NO_LINE_ITEM":
-return true
-}
-return strings.HasPrefix(code, "HTTP_")
+	switch code {
+	case "SESSION_INIT_ERROR", "AMOUNT_UPDATE_ERROR", "SITE_HTTP_ERROR", "NO_LINE_ITEM":
+		return true
+	}
+	return strings.HasPrefix(code, "HTTP_") ||
+		strings.HasPrefix(code, "INVALID_REQUEST:") ||
+		strings.HasPrefix(code, "API_ERROR:") ||
+		code == "RATE_LIMIT" ||
+		code == "IDEMPOTENCY_ERROR"
 }
 
 func processCardOnSite(cfg CardConfig, paymentLink, maskedCard string, start time.Time) CheckResult {
